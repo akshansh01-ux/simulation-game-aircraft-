@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SkyPilot — Hand Gesture Aircraft Game</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap');
+
+  :root {
+    --sky-deep: #020b18;
+    --sky-mid: #051530;
+    --neon-cyan: #00f5ff;
+    --neon-orange: #ff6b35;
+    --neon-green: #39ff14;
+    --neon-red: #ff073a;
+    --star-white: #e8f4f8;
+    --hud-bg: rgba(0,245,255,0.07);
+    --hud-border: rgba(0,245,255,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--sky-deep);
+    color: var(--star-white);
+    font-family: 'Rajdhani', sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #gameWrapper {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* Game Canvas */
+  #gameCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 1;
+  }
+
+  /* Camera feed (mirrored, bottom-right corner) */
+  #camContainer {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 220px;
+    height: 165px;
+    border: 2px solid var(--hud-border);
+    border-radius: 12px;
+    overflow: hidden;
+    z-index: 10;
+    background: #000;
+    box-shadow: 0 0 20px rgba(0,245,255,0.2), 0 0 40px rgba(0,245,255,0.05);
+  }
+  #camLabel {
+    position: absolute;
+    bottom: 22px;
+    right: 22px;
+    width: 216px;
+    text-align: center;
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    color: var(--neon-cyan);
+    letter-spacing: 3px;
+    z-index: 11;
+    padding: 2px 0;
+    text-shadow: 0 0 8px var(--neon-cyan);
+    pointer-events: none;
+  }
+  #camVideo {
+    transform: scaleX(-1);
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0.85;
+  }
+  #camOverlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    transform: scaleX(-1);
+  }
+
+  /* HUD */
+  #hud {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 18px 28px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .hud-panel {
+    background: var(--hud-bg);
+    border: 1px solid var(--hud-border);
+    border-radius: 8px;
+    padding: 8px 18px;
+    backdrop-filter: blur(4px);
+  }
+  .hud-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: var(--neon-cyan);
+    opacity: 0.7;
+    text-transform: uppercase;
+  }
+  .hud-value {
+    font-family: 'Orbitron', monospace;
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--star-white);
+    text-shadow: 0 0 10px var(--neon-cyan);
+  }
+  #gestureDisplay {
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--hud-border);
+    background: var(--hud-bg);
+    color: var(--neon-green);
+    text-shadow: 0 0 8px var(--neon-green);
+    min-width: 140px;
+    text-align: center;
+  }
+  #livesDisplay {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .life-icon { font-size: 18px; filter: drop-shadow(0 0 4px #ff6b35); }
+
+  /* Screen overlays */
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    background: radial-gradient(ellipse at center, rgba(2,11,24,0.92) 0%, rgba(2,11,24,0.98) 100%);
+  }
+  .screen h1 {
+    font-family: 'Orbitron', monospace;
+    font-size: clamp(36px, 8vw, 72px);
+    font-weight: 900;
+    letter-spacing: 6px;
+    background: linear-gradient(135deg, var(--neon-cyan), #fff, var(--neon-orange));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-align: center;
+    margin-bottom: 8px;
+    filter: drop-shadow(0 0 30px rgba(0,245,255,0.4));
+  }
+  .screen .tagline {
+    font-size: 13px;
+    letter-spacing: 4px;
+    color: var(--neon-cyan);
+    opacity: 0.6;
+    margin-bottom: 40px;
+    text-transform: uppercase;
+  }
+  .instruction-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    max-width: 520px;
+    margin-bottom: 40px;
+  }
+  .instruction-card {
+    background: var(--hud-bg);
+    border: 1px solid var(--hud-border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: center;
+  }
+  .instruction-card .icon { font-size: 28px; margin-bottom: 6px; }
+  .instruction-card .text { font-size: 12px; letter-spacing: 1px; color: rgba(232,244,248,0.7); line-height: 1.5; }
+  .btn {
+    font-family: 'Orbitron', monospace;
+    font-size: 13px;
+    letter-spacing: 4px;
+    padding: 14px 44px;
+    border: 2px solid var(--neon-cyan);
+    background: transparent;
+    color: var(--neon-cyan);
+    border-radius: 4px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+    text-shadow: 0 0 8px var(--neon-cyan);
+    box-shadow: 0 0 20px rgba(0,245,255,0.15), inset 0 0 20px rgba(0,245,255,0.05);
+  }
+  .btn:hover {
+    background: rgba(0,245,255,0.12);
+    box-shadow: 0 0 40px rgba(0,245,255,0.3), inset 0 0 30px rgba(0,245,255,0.1);
+    transform: scale(1.04);
+  }
+  #gameOverScreen .final-score {
+    font-family: 'Orbitron', monospace;
+    font-size: 48px;
+    font-weight: 900;
+    color: var(--neon-orange);
+    text-shadow: 0 0 20px var(--neon-orange);
+    margin: 10px 0 4px;
+  }
+  #gameOverScreen .label { font-size: 11px; letter-spacing: 4px; color: rgba(255,107,53,0.6); margin-bottom: 30px; }
+
+  /* Permission notice */
+  #permNotice {
+    position: absolute;
+    bottom: 200px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Orbitron', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--neon-cyan);
+    opacity: 0.5;
+    text-align: center;
+    z-index: 21;
+  }
+</style>
+</head>
+<body>
+<div id="gameWrapper">
+
+  <!-- Game Canvas -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Camera -->
+  <div id="camContainer">
+    <video id="camVideo" autoplay playsinline></video>
+    <canvas id="camOverlay"></canvas>
+  </div>
+  <div id="camLabel">✋ HAND SENSOR</div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="hud-panel">
+      <div class="hud-label">Score</div>
+      <div class="hud-value" id="scoreVal">0</div>
+    </div>
+    <div id="gestureDisplay">● WAITING</div>
+    <div class="hud-panel" style="text-align:right">
+      <div class="hud-label">Lives</div>
+      <div id="livesDisplay"></div>
+    </div>
+  </div>
+
+  <!-- Start Screen -->
+  <div class="screen" id="startScreen">
+    <h1>SKYPILOT</h1>
+    <div class="tagline">Hand-Controlled Aerial Combat</div>
+    <div class="instruction-grid">
+      <div class="instruction-card">
+        <div class="icon">✋</div>
+        <div class="text">Hold hand in front of camera to control aircraft</div>
+      </div>
+      <div class="instruction-card">
+        <div class="icon">👈👉</div>
+        <div class="text">Tilt hand left/right to steer the jet</div>
+      </div>
+      <div class="instruction-card">
+        <div class="icon">☝️</div>
+        <div class="text">Point finger UP to boost speed</div>
+      </div>
+      <div class="instruction-card">
+        <div class="icon">🌩️</div>
+        <div class="text">Dodge asteroids and enemy drones</div>
+      </div>
+    </div>
+    <button class="btn" id="startBtn">LAUNCH MISSION</button>
+    <div id="permNotice">⚠ Camera permission required for hand tracking</div>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div class="screen" id="gameOverScreen" style="display:none">
+    <h1>CRASHED</h1>
+    <div class="final-score" id="finalScore">0</div>
+    <div class="label">POINTS EARNED</div>
+    <button class="btn" id="restartBtn">RETRY MISSION</button>
+  </div>
+
+</div>
+
+<script>
+// ─── Constants & State ──────────────────────────────────────────
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const camVideo = document.getElementById('camVideo');
+const camOverlay = document.getElementById('camOverlay');
+const camCtx = camOverlay.getContext('2d');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  camOverlay.width = 220; camOverlay.height = 165;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Game state
+let state = 'start'; // start | playing | dead
+let score = 0, lives = 3, level = 1;
+let frameCount = 0;
+let animId;
+
+// Hand data
+let handX = 0.5; // 0-1 normalised (mirrored)
+let handY = 0.5;
+let gesture = 'NONE'; // LEFT | RIGHT | CENTER | BOOST
+let handDetected = false;
+
+// ─── Aircraft ───────────────────────────────────────────────────
+const ship = {
+  x: 0, y: 0,
+  vx: 0, vy: 0,
+  w: 56, h: 36,
+  trail: [],
+  invincible: 0,
+  boosting: false
+};
+
+// ─── Obstacles ──────────────────────────────────────────────────
+let obstacles = [];
+let particles = [];
+let stars = [];
+let explosions = [];
+
+function initStars() {
+  stars = [];
+  for (let i = 0; i < 180; i++) {
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.8 + 0.3,
+      speed: Math.random() * 1.5 + 0.4,
+      opacity: Math.random() * 0.8 + 0.2
+    });
+  }
+}
+
+function spawnObstacle() {
+  const types = ['asteroid', 'asteroid', 'asteroid', 'drone'];
+  const type = types[Math.floor(Math.random() * types.length)];
+  const margin = 60;
+  const x = margin + Math.random() * (W - margin * 2);
+  const speed = (1.8 + level * 0.5 + Math.random() * 2) * (ship.boosting ? 1.6 : 1);
+  if (type === 'asteroid') {
+    obstacles.push({
+      type, x, y: -60,
+      r: 22 + Math.random() * 28,
+      vx: (Math.random() - 0.5) * 1.2,
+      vy: speed,
+      rot: 0,
+      rotSpeed: (Math.random() - 0.5) * 0.06,
+      hp: 1
+    });
+  } else {
+    obstacles.push({
+      type, x, y: -50,
+      w: 42, h: 26,
+      vx: (Math.random() - 0.5) * 1.5,
+      vy: speed * 0.8,
+      wobble: 0,
+      hp: 2
+    });
+  }
+}
+
+function spawnExplosion(x, y, color) {
+  for (let i = 0; i < 18; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 4;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 2 + Math.random() * 4,
+      life: 1,
+      decay: 0.025 + Math.random() * 0.03,
+      color
+    });
+  }
+  explosions.push({ x, y, r: 0, maxR: 60, life: 1 });
+}
+
+// ─── Drawing Helpers ────────────────────────────────────────────
+function drawBackground() {
+  // Deep space gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#010a16');
+  grad.addColorStop(1, '#020f22');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Nebula blobs
+  ctx.save();
+  ctx.globalAlpha = 0.04;
+  ctx.fillStyle = '#0066ff';
+  ctx.beginPath(); ctx.ellipse(W*0.2, H*0.3, 300, 180, 0.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ff3300';
+  ctx.beginPath(); ctx.ellipse(W*0.8, H*0.7, 250, 150, -0.3, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Stars
+  stars.forEach(s => {
+    s.y += s.speed * (ship.boosting ? 3 : 1);
+    if (s.y > H) { s.y = -5; s.x = Math.random() * W; }
+    ctx.globalAlpha = s.opacity;
+    ctx.fillStyle = '#e8f4f8';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawShip() {
+  if (ship.invincible > 0 && Math.floor(frameCount / 5) % 2 === 0) return;
+
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+
+  // Engine glow trail
+  ship.trail.forEach((p, i) => {
+    const a = (i / ship.trail.length) * 0.5;
+    ctx.globalAlpha = a;
+    const g = ctx.createRadialGradient(p.x - ship.x, p.y - ship.y, 0, p.x - ship.x, p.y - ship.y, 14);
+    g.addColorStop(0, ship.boosting ? '#ff6b35' : '#00aaff');
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x - ship.x, p.y - ship.y, 14, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Fuselage
+  ctx.fillStyle = '#c8e6f8';
+  ctx.beginPath();
+  ctx.moveTo(0, -18);     // nose
+  ctx.lineTo(10, 0);
+  ctx.lineTo(8, 18);
+  ctx.lineTo(0, 14);
+  ctx.lineTo(-8, 18);
+  ctx.lineTo(-10, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cockpit
+  ctx.fillStyle = ship.boosting ? '#39ff14' : '#00f5ff';
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.ellipse(0, -5, 5, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Wings
+  ctx.fillStyle = '#6ab0d8';
+  // Left wing
+  ctx.beginPath();
+  ctx.moveTo(-4, 6);
+  ctx.lineTo(-28, 16);
+  ctx.lineTo(-20, 20);
+  ctx.lineTo(-6, 14);
+  ctx.closePath();
+  ctx.fill();
+  // Right wing
+  ctx.beginPath();
+  ctx.moveTo(4, 6);
+  ctx.lineTo(28, 16);
+  ctx.lineTo(20, 20);
+  ctx.lineTo(6, 14);
+  ctx.closePath();
+  ctx.fill();
+
+  // Tail fins
+  ctx.fillStyle = '#4a8fbf';
+  ctx.beginPath(); ctx.moveTo(-3,14); ctx.lineTo(-12,22); ctx.lineTo(-5,20); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(3,14); ctx.lineTo(12,22); ctx.lineTo(5,20); ctx.closePath(); ctx.fill();
+
+  // Engine glow
+  const eng = ctx.createRadialGradient(0, 18, 0, 0, 18, 12);
+  eng.addColorStop(0, ship.boosting ? '#ff6b35' : '#00f5ff');
+  eng.addColorStop(1, 'transparent');
+  ctx.fillStyle = eng;
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath(); ctx.arc(0, 18, 12, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+function drawObstacle(o) {
+  ctx.save();
+  if (o.type === 'asteroid') {
+    ctx.translate(o.x, o.y);
+    ctx.rotate(o.rot);
+    // Rock shape
+    ctx.fillStyle = '#5c4a3a';
+    ctx.strokeStyle = '#7a6450';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const pts = 8;
+    for (let i = 0; i < pts; i++) {
+      const a = (i / pts) * Math.PI * 2;
+      const jitter = 0.75 + Math.sin(i * 7.3) * 0.25;
+      const rx = Math.cos(a) * o.r * jitter;
+      const ry = Math.sin(a) * o.r * jitter;
+      i === 0 ? ctx.moveTo(rx, ry) : ctx.lineTo(rx, ry);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Craters
+    ctx.fillStyle = '#4a3a2c';
+    ctx.beginPath(); ctx.arc(-o.r*0.3, -o.r*0.2, o.r*0.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(o.r*0.3, o.r*0.15, o.r*0.12, 0, Math.PI*2); ctx.fill();
+  } else {
+    // Drone
+    o.wobble += 0.08;
+    ctx.translate(o.x, o.y + Math.sin(o.wobble) * 4);
+    ctx.fillStyle = '#cc1a1a';
+    ctx.strokeStyle = '#ff4040';
+    ctx.lineWidth = 1.5;
+    // Body
+    ctx.beginPath();
+    ctx.roundRect(-o.w/2, -o.h/2, o.w, o.h, 5);
+    ctx.fill(); ctx.stroke();
+    // Eye
+    ctx.fillStyle = '#ff073a';
+    ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(3, -2, 3, 0, Math.PI*2); ctx.fill();
+    // Rotors
+    ctx.strokeStyle = 'rgba(255,64,64,0.5)';
+    ctx.lineWidth = 3;
+    [[-o.w/2-8,-o.h/2-4],[o.w/2+8,-o.h/2-4],[-o.w/2-8,o.h/2+4],[o.w/2+8,o.h/2+4]].forEach(([rx,ry])=>{
+      ctx.beginPath(); ctx.arc(rx, ry, 9, 0, Math.PI*2); ctx.stroke();
+    });
+  }
+  ctx.restore();
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  explosions.forEach(e => {
+    ctx.globalAlpha = e.life * 0.4;
+    ctx.strokeStyle = '#ff6b35';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawHUD() {
+  // Score
+  document.getElementById('scoreVal').textContent = score;
+
+  // Gesture indicator
+  const gd = document.getElementById('gestureDisplay');
+  if (!handDetected) {
+    gd.style.color = 'rgba(232,244,248,0.3)';
+    gd.style.textShadow = 'none';
+    gd.textContent = '✋ NO HAND';
+  } else {
+    const map = {
+      LEFT:   { label: '◀ BANK LEFT',  color: '#00f5ff' },
+      RIGHT:  { label: 'BANK RIGHT ▶', color: '#00f5ff' },
+      CENTER: { label: '▲ LEVEL',      color: '#39ff14' },
+      BOOST:  { label: '⚡ BOOST!',     color: '#ff6b35' }
+    };
+    const info = map[gesture] || map['CENTER'];
+    gd.style.color = info.color;
+    gd.style.textShadow = `0 0 8px ${info.color}`;
+    gd.textContent = info.label;
+  }
+
+  // Lives
+  const ld = document.getElementById('livesDisplay');
+  ld.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const ic = document.createElement('span');
+    ic.className = 'life-icon';
+    ic.textContent = i < lives ? '✈' : '✕';
+    ic.style.opacity = i < lives ? '1' : '0.2';
+    ld.appendChild(ic);
+  }
+}
+
+// ─── Collision Detection ─────────────────────────────────────────
+function checkCollisions() {
+  if (ship.invincible > 0) return;
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    let hit = false;
+    if (o.type === 'asteroid') {
+      const dx = ship.x - o.x, dy = ship.y - o.y;
+      hit = Math.sqrt(dx*dx + dy*dy) < o.r + 18;
+    } else {
+      hit = Math.abs(ship.x - o.x) < o.w/2 + 18 && Math.abs(ship.y - o.y) < o.h/2 + 16;
+    }
+    if (hit) {
+      spawnExplosion(ship.x, ship.y, '#ff6b35');
+      spawnExplosion(o.x, o.y, '#cc4400');
+      obstacles.splice(i, 1);
+      lives--;
+      ship.invincible = 120;
+      updateLives();
+      if (lives <= 0) endGame();
+      break;
+    }
+  }
+}
+
+function updateLives() {
+  const ld = document.getElementById('livesDisplay');
+  ld.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const ic = document.createElement('span');
+    ic.className = 'life-icon';
+    ic.textContent = i < lives ? '✈' : '✕';
+    ic.style.opacity = i < lives ? '1' : '0.2';
+    ld.appendChild(ic);
+  }
+}
+
+// ─── Game Loop ───────────────────────────────────────────────────
+function update() {
+  frameCount++;
+
+  // Move ship toward hand X position
+  const targetX = handDetected ? handX * W : ship.x;
+  const targetY = handDetected ? handY * H * 0.7 + H * 0.15 : ship.y;
+
+  // Gesture-based movement
+  let ax = 0;
+  if (gesture === 'LEFT')  ax = -5;
+  if (gesture === 'RIGHT') ax = 5;
+  // Also lerp toward hand X
+  const handTargetVx = (targetX - ship.x) * 0.06;
+  ax += handTargetVx;
+
+  ship.vx += ax * 0.3;
+  ship.vx *= 0.82;
+  ship.vy += (targetY - ship.y) * 0.04;
+  ship.vy *= 0.85;
+
+  ship.x += ship.vx;
+  ship.y += ship.vy;
+
+  // Clamp
+  ship.x = Math.max(40, Math.min(W - 40, ship.x));
+  ship.y = Math.max(60, Math.min(H - 80, ship.y));
+
+  // Trail
+  ship.trail.push({ x: ship.x, y: ship.y });
+  if (ship.trail.length > 14) ship.trail.shift();
+
+  // Invincibility
+  if (ship.invincible > 0) ship.invincible--;
+
+  // Boost
+  ship.boosting = gesture === 'BOOST';
+
+  // Spawn obstacles
+  const spawnRate = Math.max(30, 80 - level * 8);
+  if (frameCount % spawnRate === 0) spawnObstacle();
+
+  // Level up
+  if (frameCount % 400 === 0) { level++; }
+
+  // Update obstacles
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    o.x += o.vx;
+    o.y += o.vy;
+    if (o.type === 'asteroid') o.rot += o.rotSpeed;
+    if (o.y > H + 80) {
+      obstacles.splice(i, 1);
+      score += 5;
+    }
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.05;
+    p.life -= p.decay;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const e = explosions[i];
+    e.r += 3; e.life -= 0.05;
+    if (e.life <= 0) explosions.splice(i, 1);
+  }
+
+  // Score
+  if (frameCount % 10 === 0) score++;
+
+  // Collisions
+  checkCollisions();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+  obstacles.forEach(drawObstacle);
+  drawParticles();
+  drawShip();
+  drawHUD();
+}
+
+function gameLoop() {
+  if (state !== 'playing') return;
+  update();
+  draw();
+  animId = requestAnimationFrame(gameLoop);
+}
+
+// ─── Hand Tracking (MediaPipe) ──────────────────────────────────
+function setupHands() {
+  const hands = new Hands({
+    locateFile: (file) =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  });
+
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.6
+  });
+
+  hands.onResults(onHandResults);
+
+  const camera = new Camera(camVideo, {
+    onFrame: async () => {
+      await hands.send({ image: camVideo });
+    },
+    width: 320, height: 240
+  });
+  camera.start();
+}
+
+function onHandResults(results) {
+  camCtx.clearRect(0, 0, 220, 165);
+
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    handDetected = false;
+    gesture = 'NONE';
+    return;
+  }
+
+  handDetected = true;
+  const lm = results.multiHandLandmarks[0];
+
+  // Draw hand skeleton on cam overlay
+  drawConnectors(camCtx, lm, HAND_CONNECTIONS, { color: '#00f5ff44', lineWidth: 1.5 });
+  drawLandmarks(camCtx, lm, { color: '#00f5ff', lineWidth: 1, radius: 3 });
+
+  // Mirror X (camera is mirrored in CSS)
+  const rawX = 1 - lm[9].x; // middle finger base — mirrored
+  const rawY = lm[9].y;
+
+  handX = rawX;
+  handY = rawY;
+
+  // Gesture: tilt detection via wrist vs middle-finger-base
+  const wrist = lm[0];
+  const midBase = lm[9];
+  const dx = midBase.x - wrist.x; // negative = tilted left in raw coords
+  const tilt = -dx; // mirrored
+
+  // Index finger up = boost
+  const indexTip = lm[8];
+  const indexMcp = lm[5];
+  const indexUp = indexMcp.y - indexTip.y > 0.08;
+
+  if (indexUp && Math.abs(tilt) < 0.08) {
+    gesture = 'BOOST';
+  } else if (tilt > 0.07) {
+    gesture = 'RIGHT';
+  } else if (tilt < -0.07) {
+    gesture = 'LEFT';
+  } else {
+    gesture = 'CENTER';
+  }
+}
+
+// ─── Game Control ────────────────────────────────────────────────
+function startGame() {
+  score = 0; lives = 3; level = 1; frameCount = 0;
+  obstacles = []; particles = []; explosions = [];
+  ship.x = W / 2; ship.y = H * 0.65;
+  ship.vx = 0; ship.vy = 0; ship.trail = [];
+  ship.invincible = 60;
+  initStars();
+  updateLives();
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('gameOverScreen').style.display = 'none';
+  state = 'playing';
+  gameLoop();
+}
+
+function endGame() {
+  state = 'dead';
+  cancelAnimationFrame(animId);
+  // Final explosion
+  for (let i = 0; i < 3; i++) {
+    setTimeout(() => spawnExplosion(
+      ship.x + (Math.random()-0.5)*40,
+      ship.y + (Math.random()-0.5)*40,
+      i % 2 === 0 ? '#ff6b35' : '#ff073a'
+    ), i * 200);
+  }
+  setTimeout(() => {
+    document.getElementById('finalScore').textContent = score;
+    document.getElementById('gameOverScreen').style.display = 'flex';
+  }, 800);
+}
+
+// ─── Init ────────────────────────────────────────────────────────
+document.getElementById('startBtn').addEventListener('click', () => {
+  setupHands();
+  startGame();
+});
+document.getElementById('restartBtn').addEventListener('click', startGame);
+
+// Keyboard fallback (arrow keys)
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (!handDetected) {
+    if (keys['ArrowLeft'])  { gesture = 'LEFT';  handDetected = true; handX = Math.max(0, handX - 0.05); }
+    if (keys['ArrowRight']) { gesture = 'RIGHT'; handDetected = true; handX = Math.min(1, handX + 0.05); }
+    if (keys['ArrowUp'])    { gesture = 'BOOST'; handDetected = true; }
+    if (keys[' '])          { gesture = 'CENTER'; handDetected = true; }
+  }
+});
+window.addEventListener('keyup', e => {
+  delete keys[e.key];
+  if (!handDetected) gesture = 'CENTER';
+});
+</script>
+</body>
+</html>
